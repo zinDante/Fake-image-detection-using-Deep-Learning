@@ -1,0 +1,91 @@
+import torch
+import torch.nn as nn
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+import matplotlib.pyplot as plt
+
+# Define the model
+class MyModel(nn.Module):
+    def __init__(self):
+        super(MyModel, self).__init__()
+        self.conv1 = nn.Conv2d(3, 32, 3)
+        self.relu1 = nn.ReLU()
+        self.pool1 = nn.MaxPool2d(2)
+        self.conv2 = nn.Conv2d(32, 64, 3)
+        self.relu2 = nn.ReLU()
+        self.pool2 = nn.MaxPool2d(2)
+        self.fc1 = nn.Linear(64 * 6 * 6, 128)
+        self.relu3 = nn.ReLU()
+        self.fc2 = nn.Linear(128, 2)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.relu1(x)
+        x = self.pool1(x)
+        x = self.conv2(x)
+        x = self.relu2(x)
+        x = self.pool2(x)
+        x = x.view(-1, 64 * 6 * 6)
+        x = self.fc1(x)
+        x = self.relu3(x)
+        x = self.fc2(x)
+        return x
+
+# Set the transform to apply to the input image
+transform = transforms.Compose([
+    transforms.Resize((32, 32)),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+])
+
+# Load the combined dataset
+combined_dataset = datasets.ImageFolder(root='./results', transform=transform)
+
+# Create a DataLoader to efficiently load and iterate over the dataset
+batch_size = 4
+combined_loader = torch.utils.data.DataLoader(combined_dataset, batch_size=batch_size, shuffle=True)
+
+# Define the model
+model = MyModel()
+
+# Define the loss function
+criterion = nn.CrossEntropyLoss()
+
+# Define the optimizer
+optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+
+# Train the model
+num_epochs = 10
+loss_values = []  # List to store the loss values
+
+for epoch in range(10):
+    running_loss = 0.0
+    for i, data in enumerate(combined_loader, 0):
+        inputs, labels = data
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item()
+
+        # Print training progress
+        if (i + 1) % 2000 == 0:
+            print(f"Epoch [{epoch + 1}/{10}], Step [{i + 1}/{len(combined_loader)}], Loss: {running_loss / 2000:.4f}")
+            running_loss = 0.0
+
+    # Calculate average loss for the epoch
+    epoch_loss = running_loss / len(combined_loader)
+    loss_values.append(epoch_loss)
+
+
+
+# Plot the loss convergence graph
+plt.plot(range(1, num_epochs + 1), loss_values)
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Loss Convergence')
+plt.show()
+
+# Save the trained model
+torch.save(model.state_dict(), "fake_detectionmodel.pt")
