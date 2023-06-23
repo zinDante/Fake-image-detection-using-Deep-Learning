@@ -1,0 +1,202 @@
+# Deep Convolutional GANs
+
+# Importing the libraries
+from __future__ import print_function
+
+import os
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.utils.data
+import torchvision.datasets as dset
+import torchvision.transforms as transforms
+import torchvision.utils as vutils
+from torch.autograd import Variable
+import multiprocessing
+
+# Adding the if __name__ == '__main__': block
+if __name__ == '__main__':
+    multiprocessing.freeze_support()
+
+    # Setting some hyperparameters
+    batchSize = 64  # We set the size of the batch.
+    imageSize = 64  # We set the size of the generated images (64x64).
+
+    # Creating the transformations
+    transform = transforms.Compose([transforms.Resize(imageSize), transforms.ToTensor(),
+                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)), ])
+
+    # Loading the dataset
+    dataset = dset.CIFAR10(root='./data', download=True, transform=transform)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=True, num_workers=2)
+
+    # Defining the rest of the code...
+
+    # Defining the weights_init function that initializes all the weights of a neural network
+    def weights_init(m):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            m.weight.data.normal_(0.0, 0.02)
+        elif classname.find('BatchNorm') != -1:
+            m.weight.data.normal_(1.0, 0.02)
+            m.bias.data.fill_(0)
+
+
+    # Defining the generator
+    class Generator(nn.Module):
+        def __init__(self):
+            super(Generator, self).__init__()
+            self.main = nn.Sequential(
+                nn.ConvTranspose2d(100, 512, 4, 1, 0, bias=False),
+                nn.BatchNorm2d(512),
+                nn.ReLU(True),
+                nn.ConvTranspose2d(512, 256, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(256),
+                nn.ReLU(True),
+                nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(128),
+                nn.ReLU(True),
+                nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(True),
+                nn.ConvTranspose2d(64, 3, 4, 2, 1, bias=False),
+                nn.Tanh()
+            )
+
+        def forward(self, input):
+            output = self.main(input)
+            return output
+
+
+    # Creating the generator
+    netG = Generator()
+    netG.apply(weights_init)
+
+    # Defining the discriminator
+    class Discriminator(nn.Module):
+        def __init__(self):
+            super(Discriminator, self).__init__()
+            self.main = nn.Sequential(
+                nn.Conv2d(3, 64, 4, 2, 1, bias=False),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(64, 128, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(128),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(128, 256, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(256),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(256, 512, 4, 2, 1, bias=False),
+                nn.BatchNorm2d(512),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(512, 1, 4, 1, 0, bias=False),
+                nn.Sigmoid()
+            )
+
+        def forward(self, input):
+            output = self.main(input)
+            return output.view(-1, 1).squeeze(1)
+
+
+    # Creating the discriminator
+    netD = Discriminator()
+    netD.apply(weights_init)
+
+    # Training the DCGANs
+
+    # Defining the loss criterion
+    criterion = nn.BCELoss()
+
+    # Creating the input for the generator (a random vector of noise)
+    # Creating the input for the generator (a random vector of noise)
+    input = torch.FloatTensor(batchSize, 100, 1, 1)
+
+    # Creating the labels for the real and fake images
+    label = torch.FloatTensor(batchSize)
+
+    # Creating the variables for the criterion
+    real_label = 1
+    fake_label = 0
+
+    # Creating the optimizer for the generator and the discriminator
+    optimizerD = optim.Adam(netD.parameters(), lr=0.0002, betas=(0.5, 0.999))
+    optimizerG = optim.Adam(netG.parameters(), lr=0.0002, betas=(0.5, 0.999))
+
+    # Training the DCGANs
+    for epoch in range(25):
+        for i, data in enumerate(dataloader, 0):
+            # (1) Updating the weights of the discriminator network
+
+            # Clearing the gradients of the discriminator
+            netD.zero_grad()
+
+            # Training the discriminator with a real image of the dataset
+            real, _ = data
+            input.resize_(real.size()).copy_(real)
+            label.resize_(real.size(0)).fill_(real_label)
+            inputv = Variable(input)
+            labelv = Variable(label)
+
+            output = netD(inputv)
+            errD_real = criterion(output, labelv)
+            errD_real.backward()
+            D_x = output.data.mean()
+
+            # Training the discriminator with a fake image generated by the generator
+            noise = torch.FloatTensor(batchSize, 100, 1, 1).normal_(0, 1)  # Define the noise tensor
+            noisev = Variable(noise)
+            fake = netG(noisev)
+            label.resize_(fake.size(0)).fill_(fake_label)
+            inputv = fake.detach()
+            labelv = Variable(label)
+
+            output = netD(inputv)
+            errD_fake = criterion(output, labelv)
+            errD_fake.backward()
+            D_G_z1 = output.data.mean()
+
+            # Updating the weights of the discriminator
+            errD = errD_real + errD_fake
+            optimizerD.step()
+
+            # (2) Updating the weights of the generator network
+
+            # Clearing the gradients of the generator
+            netG.zero_grad()
+
+            # Training the generator to fool the discriminator
+            label.resize_(batchSize).fill_(real_label)
+            labelv = Variable(label)
+
+            output = netD(fake)
+            errG = criterion(output, labelv)
+            errG.backward()
+            D_G_z2 = output.data.mean()
+
+            # Updating the weights of the generator
+            optimizerG.step()
+
+            # (3) Printing the losses and saving the real images and the generated images of the minibatch every 100 steps
+            print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+                  % (epoch, 25, i, len(dataloader),
+                     errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+
+            if i % 100 == 0:
+                real_images = real.detach().cpu()
+                fake_images = fake.detach().cpu()
+
+                # Saving real images
+                os.makedirs("./results/real_samples", exist_ok=True)
+                for j in range(real_images.shape[0]):
+                    vutils.save_image(real_images[j], f"./results/real_samples/real_sample_{epoch}_{i}_{j}.png",
+                                      normalize=True)
+
+                # Saving fake images
+                os.makedirs("./results/fake_samples", exist_ok=True)
+                for j in range(fake_images.shape[0]):
+                    vutils.save_image(fake_images[j], f"./results/fake_samples/fake_sample_{epoch}_{i}_{j}.png",
+                                      normalize=True)
+
+                # Save checkpoint at the end of each epoch
+            torch.save(netG.state_dict(), f"./results/netG_epoch_{epoch}.pth")
+            torch.save(netD.state_dict(), f"./results/netD_epoch_{epoch}.pth")
